@@ -1,0 +1,118 @@
+import pathway as pw
+from datetime import datetime, timedelta, timezone
+import logging
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# 1. Schema Definition (Ingest all as str to prevent parse errors from quoted JSON)
+class EventSchema(pw.Schema):
+    user_id: str  
+    event_type: str
+    timestamp: str 
+    value: str     
+    payload: str
+
+# 2. UDFs for type conversion
+@pw.udf
+def get_uid(uid_str: str) -> int:
+    return int(uid_str)
+
+@pw.udf
+def get_ts(ts_str: str) -> pw.DateTimeUtc:
+    dt = datetime.fromisoformat(ts_str)
+    return dt.replace(tzinfo=timezone.utc)
+
+@pw.udf
+def get_value(val_str: str) -> float:
+    return float(val_str)
+
+@pw.udf
+def get_hash(uid_str: str, ts_str: str) -> str:
+    return f"{uid_str}_{ts_str}"
+
+# Function to create Kafka reader with different group IDs
+def create_kafka_reader(group_id):
+    reader = pw.io.kafka.read(
+        rdkafka_settings={
+            "bootstrap.servers": "127.0.0.1:9094",
+            "group.id": group_id,
+            "enable.auto.commit": "false",
+            "session.timeout.ms": "60000",
+            "heartbeat.interval.ms": "20000"
+        },
+        topic="events",
+        format="json",
+        schema=EventSchema,
+        parallel_readers=3
+    )
+    reader = reader.with_columns(
+        user_id_int=get_uid(pw.this.user_id),
+        parsed_ts=get_ts(pw.this.timestamp),
+        float_value=get_value(pw.this.value),  # Corrected numeric column
+        temp_hash=get_hash(pw.this.user_id, pw.this.timestamp)
+    )
+    return reader
+
+# Create multiple Kafka readers with different group IDs
+kafka1 = create_kafka_reader("pathway-group-1")
+kafka2 = create_kafka_reader("pathway-group-2")
+kafka3 = create_kafka_reader("pathway-group-3")
+
+# 5. Windowed Aggregation
+def windowed_aggregation(kafka, group_id):
+    logger.info(f"Starting windowed aggregation for group {group_id}")
+    windowed = (
+        kafka
+        .windowby(
+            kafka.parsed_ts, 
+            window=pw.temporal.tumbling(duration=timedelta(minutes=1)),
+            instance=kafka.user_id_int
+        )
+        .reduce(
+            user_id=pw.this._pw_instance,
+            count=pw.reducers.count(),
+            total_value=pw.reducers.sum(pw.this.float_value),
+            event_hash=pw.reducers.any(pw.this.temp_hash)
+        )
+        .filter(pw.this.count <= 1000)
+    )
+    logger.info(f"Completed windowed aggregation for group {group_id}")
+    return windowed
+
+windowed1 = windowed_aggregation(kafka1, "pathway-group-1")
+windowed2 = windowed_aggregation(kafka2, "pathway-group-2")
+windowed3 = windowed_aggregation(kafka3, "pathway-group-3")
+
+# 6. SQL Output
+postgres_config = {
+    "host": "localhost",
+    "port": "5432",
+    "dbname": "pocevents",
+    "user": "pocuser",
+    "password": "pocpass"
+}
+
+pw.io.postgres.write(
+    windowed1,
+    postgres_settings=postgres_config,
+    table_name="events"
+)
+
+pw.io.postgres.write(
+    windowed2,
+    postgres_settings=postgres_config,
+    table_name="events"
+)
+
+pw.io.postgres.write(
+    windowed3,
+    postgres_settings=postgres_config,
+    table_name="events"
+)
+
+if __name__ == "__main__":
+    logger.info("Starting Pathway pipeline")
+    pw.run()
+    logger.info("Pathway pipeline completed")
