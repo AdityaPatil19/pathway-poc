@@ -1,0 +1,7 @@
+{
+  "user_id": "{{random_int(1,8000)}}",
+  "event_type": "{{random_choice(['click', 'view', 'purchase'])}}",
+  "timestamp": "{{now()}}",
+  "value": "{{random_float(0.0,100.0)}}",
+  "payload": "{{random_string(10)}}"
+}
