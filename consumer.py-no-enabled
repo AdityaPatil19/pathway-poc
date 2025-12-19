@@ -1,0 +1,93 @@
+import pathway as pw
+from datetime import datetime, timedelta, timezone
+
+# 1. Schema Definition (Ingest all as str to prevent parse errors from quoted JSON)
+class EventSchema(pw.Schema):
+    user_id: str  
+    event_type: str
+    timestamp: str 
+    value: str     
+    payload: str
+
+# 2. UDFs for type conversion
+@pw.udf
+def get_uid(uid_str: str) -> int:
+    return int(uid_str)
+
+@pw.udf
+def get_ts(ts_str: str) -> pw.DateTimeUtc:
+    return datetime.fromisoformat(ts_str)
+
+@pw.udf
+def get_value(val_str: str) -> float:
+    return float(val_str)
+
+@pw.udf
+def get_hash(uid_str: str, ts_str: str) -> str:
+    return f"{uid_str}_{ts_str}"
+
+@pw.udf
+def get_ts(ts_str: str) -> pw.DateTimeUtc:
+    # 1. Parse the naive string
+    dt = datetime.fromisoformat(ts_str)
+    # 2. Attach the UTC timezone to make it "aware"
+    return dt.replace(tzinfo=timezone.utc)
+
+# 3. Kafka Read with 2025 Stability Settings
+kafka = pw.io.kafka.read(
+    rdkafka_settings={
+        "bootstrap.servers": "127.0.0.1:9094",
+        "group.id": "pathway-group",
+        "enable.auto.commit": "false",
+        "session.timeout.ms": "60000",
+        "heartbeat.interval.ms": "20000"
+    },
+    topic="events",
+    format="json",
+    schema=EventSchema,
+    parallel_readers=3
+)
+
+# 4. Transformations (Create the correctly typed columns)
+kafka = kafka.with_columns(
+    user_id_int=get_uid(pw.this.user_id),
+    parsed_ts=get_ts(pw.this.timestamp),
+    float_value=get_value(pw.this.value),  # Corrected numeric column
+    temp_hash=get_hash(pw.this.user_id, pw.this.timestamp)
+)
+
+# 5. Windowed Aggregation
+windowed = (
+    kafka
+    .windowby(
+        kafka.parsed_ts, 
+        window=pw.temporal.tumbling(duration=timedelta(minutes=1)),
+        instance=kafka.user_id_int
+    )
+    .reduce(
+        user_id=pw.this._pw_instance,
+        count=pw.reducers.count(),
+        # FIX: Sum the float_value column, NOT the string 'value' column
+        total_value=pw.reducers.sum(pw.this.float_value),
+        event_hash=pw.reducers.any(pw.this.temp_hash)
+    )
+    .filter(pw.this.count <= 1000)
+)
+
+# 6. SQL Output
+postgres_config = {
+    "host": "localhost",
+    "port": "5432",
+    "dbname": "pocevents",
+    "user": "pocuser",
+    "password": "pocpass"
+}
+
+pw.io.postgres.write(
+    windowed,
+    postgres_settings=postgres_config,
+    table_name="events"
+)
+
+if __name__ == "__main__":
+    pw.run()
