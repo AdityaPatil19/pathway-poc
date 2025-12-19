@@ -113,7 +113,9 @@ In consumer.py: Update DB URL to postgresql://user:password@postgres:5432/db.
 
 Build (with Minikube Docker env active):
 cd poc-pathway
+
 docker build -f Dockerfile-consumer -t pathway-consumer:latest .
+
 docker build -f Dockerfile-producer -t pathway-producer:latest .
 
 Verify:docker images | grep pathway  # Images listed
@@ -124,22 +126,28 @@ kubectl apply -f pathway-deployment.yaml
 
 Verify:kubectl get pods  # 3 pathway-consumer pods Running
 kubectl get deployment pathway-consumer  # Replicas: 3
+
 kubectl logs -f <one-pod-name>  # Check for Pathway startup/no errors
 
 9. Run Producer and Test POC
 Option 1 (Local run with port-forward):
 kubectl port-forward svc/my-cluster-kafka-bootstrap -n kafka 9092:9092
+
 python producer.py  # In another terminal; send events
+
+
 Option 2 (Deploy as Job):
 Create producer-job.yaml (kind: Job, image: pathway-producer:latest).
 kubectl apply -f producer-job.yaml
 
 Verify All Points:kubectl logs -f deployment/pathway-consumer  # Event-level processing, windowing, rate limiting
 kubectl port-forward svc/postgres 5432:5432
+
 psql -h localhost -U user -d db -c "SELECT COUNT(*) FROM events;"  # Data inserted, no connection exhaustion
+
 kubectl scale deployment/pathway-consumer --replicas=5  # Scale; check logs/DB (pooling prevents exhaustion)
+
 kubectl top pods  # Resource usage stable
 
-This sequence cov
 
   
