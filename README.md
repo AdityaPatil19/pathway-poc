@@ -131,16 +131,19 @@ kubectl logs -f <one-pod-name>  # Check for Pathway startup/no errors
 
 9. Run Producer and Test POC
 Option 1 (Local run with port-forward):
+
+
 kubectl port-forward svc/my-cluster-kafka-bootstrap -n kafka 9092:9092
+kubectl port-forward svc/my-kafka-kafka-external-bootstrap -n kafka 9094:9094 (for latest with multiple consumer group)
 
 python producer.py  # In another terminal; send events
-
 
 Option 2 (Deploy as Job):
 Create producer-job.yaml (kind: Job, image: pathway-producer:latest).
 kubectl apply -f producer-job.yaml
 
-Verify All Points:kubectl logs -f deployment/pathway-consumer  # Event-level processing, windowing, rate limiting
+Verify All Points:
+kubectl logs -f deployment/pathway-consumer  # Event-level processing, windowing, rate limiting
 kubectl port-forward svc/postgres 5432:5432
 
 psql -h localhost -U user -d db -c "SELECT COUNT(*) FROM events;"  # Data inserted, no connection exhaustion
@@ -148,6 +151,17 @@ psql -h localhost -U user -d db -c "SELECT COUNT(*) FROM events;"  # Data insert
 kubectl scale deployment/pathway-consumer --replicas=5  # Scale; check logs/DB (pooling prevents exhaustion)
 
 kubectl top pods  # Resource usage stable
-
-
   
+Truncate Only the events Table (Recommended – Keeps DB Structure)
+This removes all rows but preserves the table schema (columns, indexes). Fast and safe.
+
+Exec into the Pod and Run Truncate:
+kubectl exec -it my-postgres-postgresql-0 -n kafka -- psql -U pocuser -d pocevents -c "TRUNCATE TABLE events RESTART IDENTITY CASCADE;"
+pocuser: Your username (from config).
+pocevents: Your database name.
+events: Table name (adjust if it's events_multi_group from recent code).
+RESTART IDENTITY: Resets auto-increment IDs (e.g., SERIAL columns).
+CASCADE: Drops dependent data if any.
+
+Verify It's Empty:
+kubectl exec -it my-postgres-postgresql-0 -n kafka -- psql -U pocuser -d pocevents -c "SELECT COUNT(*) FROM events;"Should return 0.
