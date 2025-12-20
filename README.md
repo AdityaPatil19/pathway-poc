@@ -22,7 +22,7 @@ This Proof of Concept (POC) demonstrates a modern streaming architecture using 
 1. Environment Cleanup (Fresh Start)
 Ensure no legacy components interfere with the KRaft mode installation.
 
-bash
+
 minikube stop && minikube delete --all --purge
 docker system prune -a -f --volumes
 rm -rf ~/poc-pathway
@@ -31,7 +31,7 @@ Use code with caution.
 
 2. Initialize Minikube
 
-bash
+
 minikube start --driver=docker --cpus=4 --memory=7000mb --kubernetes-version=stable
 eval $(minikube docker-env)  # Connects local shell to Minikube's Docker daemon
 Use code with caution.
@@ -39,7 +39,7 @@ Use code with caution.
 
 3. Install Strimzi Kafka (v0.49.1)
 
-bash
+
 kubectl create namespace kafka
 helm repo add strimzi https://strimzi.io/charts/
 helm repo update
@@ -50,19 +50,18 @@ Use code with caution.
 4. Deploy Kafka KRaft Cluster & Topic
 Deploy a 10-partition topic to test high-concurrency event processing.
 
-bash
+
 # Apply Kafka Cluster (KRaft Mode)
 kubectl apply -f kafka-kraft.yaml -n kafka
 
 # Apply 10-Partition Topic
 kubectl apply -f kafka-topic.yaml -n kafka
-Use code with caution.
 
 
 5. Database Setup
 Deploy Postgres and initialize the schema.
 
-bash
+
 kubectl apply -f postgres.yaml
 # Wait for pod to be ready, then create table:
 kubectl exec -it postgres-0 -- psql -U user -d db -c \
@@ -77,7 +76,7 @@ Use code with caution.
 6. Build Pathway Images
 Build your logic locally within the Minikube environment.
 
-bash
+
 cd poc-pathway
 docker build -f Dockerfile-consumer -t pathway-consumer:latest .
 docker build -f Dockerfile-producer -t pathway-producer:latest .
@@ -87,7 +86,7 @@ Use code with caution.
 7. Launch Consumer Scalability
 Deploy 3 replicas to demonstrate how Pathway shares load across Kafka partitions.
 
-bash
+
 kubectl apply -f pathway-deployment.yaml
 kubectl scale deployment/pathway-consumer --replicas=3
 Use code with caution.
@@ -99,7 +98,7 @@ Use code with caution.
 
 Run Data Producer
 
-bash
+
 # Forward Kafka port to local machine
 kubectl port-forward svc/my-cluster-kafka-bootstrap -n kafka 9092:9092
 
