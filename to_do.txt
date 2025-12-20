@@ -1,0 +1,13 @@
+Current Limitations (Nuclio/Iguazio):
+Connection Exhaustion: Exponential growth of DB connections due to a "1 connection per replica" model without centralized pooling, forcing unnecessary DB horizontal scaling.
+Tech Stack Fragmentation: Fragmented maintenance between Nuclio (Streaming), PySpark (Batch), and plain Python (Reporting), leading to inconsistent design patterns.
+Unreliable Triggers: Documented support for Kinesis/RabbitMQ is often unusable or untested in practice.
+Missing Streaming Primitives: Lack of first-class windowing, backpressure support for Kafka (causing DB IOPS spikes), and exactly-once semantics.
+Execution Constraints: Nuclio is unsuitable for long-running reporting consumers, requiring fragile legacy workarounds. 
+
+Target Features for Pathway POC:
+Unified Engine: Single Python-native logic for Batch, Streaming, and Reporting to simplify maintenance.
+Resource Efficiency: Built-in connection sharing and efficient multi-threading to prevent DB connection storms.
+Robust Kafka Integration: High-concurrency consumption across multiple partitions with native backpressure to protect DB health.
+Advanced Semantics: Support for Exactly-Once processing and sophisticated windowing/temporal joins.
+Rate Limiting: Event-based rate limiting to prevent downstream DB impact during bulk event spikes.
