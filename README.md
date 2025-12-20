@@ -1,167 +1,97 @@
-# pathway-poc
-pathway poc on minikube for data processing
+Pathway POC: High-Performance Data Processing on Minikube
+This Proof of Concept (POC) demonstrates a modern streaming architecture using Pathway to overcome common limitations in serverless streaming (like Nuclio) and batch processing (like PySpark).
+🚀 Key Features Addressed
+Connection Efficiency: Uses Pathway’s internal engine to prevent exponential DB connection growth.
+Backpressure Handling: Native Kafka integration manages ingestion rates to protect DB health.
+High Concurrency: Optimized for Kafka Partitioning (10 partitions) with multi-instance consumers.
+Unified Stack: Replaces fragmented batch/streaming jobs with a single Python-based Pathway logic.
+Exactly-Once Semantics: Reliable event processing without duplicates.
+🛠 Prerequisites
+Minikube installed.
+Docker Desktop (allocated at least 8GB RAM / 4 CPUs).
+Helm and kubectl installed.
+🏗 Setup Instructions
+1. Environment Cleanup (Fresh Start)
+Ensure no legacy components interfere with the KRaft mode installation.
+bash
+minikube stop && minikube delete --all --purge
+docker system prune -a -f --volumes
+rm -rf ~/poc-pathway
+Use code with caution.
 
-1. Clean Up Everything (Fresh Start)
-minikube stop
-minikube delete --all --purge
-docker system prune -a -f --volumes  # Caution: Removes all Docker data
-rm -rf ~/poc-pathway  # Delete old POC directory if exists
-
-2. Start Minikube with Adequate Resources
+2. Initialize Minikube
+bash
 minikube start --driver=docker --cpus=4 --memory=7000mb --kubernetes-version=stable
-eval $(minikube docker-env)  # Enable local Docker builds for Minikube
+eval $(minikube docker-env)  # Connects local shell to Minikube's Docker daemon
+Use code with caution.
 
-Verify:
-minikube status  # Should show "Running"
-kubectl cluster-info
-
-3. Install Strimzi Kafka Operator 0.49.1
+3. Install Strimzi Kafka (v0.49.1)
+bash
+kubectl create namespace kafka
 helm repo add strimzi https://strimzi.io/charts/
 helm repo update
-kubectl create namespace kafka
 helm install strimzi-kafka-operator strimzi/strimzi-kafka-operator --namespace kafka --version 0.49.1
+Use code with caution.
 
-Verify:
-kubectl get pods -n kafka -w  # Wait for strimzi-cluster-operator pod to be Running/1/1
-kubectl get crd | grep kafka  # Should list Kafka, KafkaNodePool, etc.
-
-4. Deploy Kafka Cluster in KRaft Mode (Single-Node Dual-Role)
-Create kafka-kraft.yaml with this exact content (uses official pattern: annotations for KRaft/node-pools, label linking, shared metadata storage, Kafka 3.8.0 as requested):
-YAMLapiVersion: kafka.strimzi.io/v1
-kind: Kafka
-metadata:
-  name: my-cluster
-  namespace: kafka
-  annotations:
-    strimzi.io/node-pools: enabled
-    strimzi.io/kraft: enabled
-spec:
-  kafka:
-    version: "3.8.0"
-    metadataVersion: "3.8-IV0"  # String format
-    listeners:
-      - name: plain
-        port: 9092
-        type: internal
-        tls: false
-    config:
-      offsets.topic.replication.factor: "1"
-      transaction.state.log.replication.factor: "1"
-      transaction.state.log.min.isr: "1"
-      default.replication.factor: "1"
-      min.insync.replicas: "1"
-      auto.create.topics.enable: "true"
-  entityOperator:
-    topicOperator: {}
-    userOperator: {}
----
-apiVersion: kafka.strimzi.io/v1
-kind: KafkaNodePool
-metadata:
-  name: dual
-  namespace: kafka
-  labels:
-    strimzi.io/cluster: my-cluster
-spec:
-  replicas: 1
-  roles:
-    - broker
-    - controller
-  storage:
-    type: jbod
-    volumes:
-      - id: 0
-        type: persistent-claim
-        size: 5Gi
-        deleteClaim: false
-        kraftMetadata: shared  # Shares metadata on this volume
-
-Apply:
+4. Deploy Kafka KRaft Cluster & Topic
+Deploy a 10-partition topic to test high-concurrency event processing.
+bash
+# Apply Kafka Cluster (KRaft Mode)
 kubectl apply -f kafka-kraft.yaml -n kafka
 
-
-5. Create Multi-Partition Kafka Topic
-Use your kafka-topic.yaml (10 partitions):
-apiVersion: kafka.strimzi.io/v1
-kind: KafkaTopic
-metadata:
-  name: my-topic
-  namespace: kafka
-  labels:
-    strimzi.io/cluster: my-cluster
-spec:
-  partitions: 10
-  replicas: 1
+# Apply 10-Partition Topic
 kubectl apply -f kafka-topic.yaml -n kafka
+Use code with caution.
 
-Verify:kubectl get kafkatopic my-topic -n kafka  # Partitions: 10
-
-6. Deploy Postgres DB
-Use your postgres.yaml (as provided earlier).
+5. Database Setup
+Deploy Postgres and initialize the schema.
+bash
 kubectl apply -f postgres.yaml
-kubectl exec -it postgres-0 -- psql -U user -d db -c "CREATE TABLE events (id SERIAL PRIMARY KEY, data TEXT);"
+# Wait for pod to be ready, then create table:
+kubectl exec -it postgres-0 -- psql -U user -d db -c \
+"CREATE TABLE events (user_id TEXT, count INT, total_value DOUBLE PRECISION, time BIGINT);"
+Use code with caution.
 
-Verify:kubectl get pods  # postgres-0 Running
-kubectl get svc postgres  # Service exists
-
-7. Prepare Pathway Code and Build Docker Images
-Create directory poc-pathway with files (requirements.txt, producer.py, consumer.py, Dockerfile-consumer, Dockerfile-producer) as provided in initial response.
-MANUAL CHANGES:
-
-In producer.py and consumer.py: Update bootstrap to the value from Step 4.
-In consumer.py: Update DB URL to postgresql://user:password@postgres:5432/db.
-
-Build (with Minikube Docker env active):
+📦 Application Deployment
+6. Build Pathway Images
+Build your logic locally within the Minikube environment.
+bash
 cd poc-pathway
-
 docker build -f Dockerfile-consumer -t pathway-consumer:latest .
-
 docker build -f Dockerfile-producer -t pathway-producer:latest .
+Use code with caution.
 
-Verify:docker images | grep pathway  # Images listed
-
-8. Deploy Pathway Consumer (Multiple Instances)
-Use your pathway-deployment.yaml (replicas: 3 for concurrency demo).
+7. Launch Consumer Scalability
+Deploy 3 replicas to demonstrate how Pathway shares load across Kafka partitions.
+bash
 kubectl apply -f pathway-deployment.yaml
+kubectl scale deployment/pathway-consumer --replicas=3
+Use code with caution.
 
-Verify:kubectl get pods  # 3 pathway-consumer pods Running
-kubectl get deployment pathway-consumer  # Replicas: 3
-
-kubectl logs -f <one-pod-name>  # Check for Pathway startup/no errors
-
-9. Run Producer and Test POC
-Option 1 (Local run with port-forward):
-
-
+🧪 Testing & Validation
+Run Data Producer
+bash
+# Forward Kafka port to local machine
 kubectl port-forward svc/my-cluster-kafka-bootstrap -n kafka 9092:9092
-kubectl port-forward svc/my-kafka-kafka-external-bootstrap -n kafka 9094:9094 (for latest with multiple consumer group)
 
-python producer.py  # In another terminal; send events
+# Run the producer script
+python producer.py
+Use code with caution.
 
-Option 2 (Deploy as Job):
-Create producer-job.yaml (kind: Job, image: pathway-producer:latest).
-kubectl apply -f producer-job.yaml
-
-Verify All Points:
-kubectl logs -f deployment/pathway-consumer  # Event-level processing, windowing, rate limiting
-kubectl port-forward svc/postgres 5432:5432
-
-psql -h localhost -U user -d db -c "SELECT COUNT(*) FROM events;"  # Data inserted, no connection exhaustion
-
-kubectl scale deployment/pathway-consumer --replicas=5  # Scale; check logs/DB (pooling prevents exhaustion)
-
-kubectl top pods  # Resource usage stable
-  
-Truncate Only the events Table (Recommended – Keeps DB Structure)
-This removes all rows but preserves the table schema (columns, indexes). Fast and safe.
-
-Exec into the Pod and Run Truncate:
-kubectl exec -it my-postgres-postgresql-0 -n kafka -- psql -U pocuser -d pocevents -c "TRUNCATE TABLE events RESTART IDENTITY CASCADE;"
-pocuser: Your username (from config).
-pocevents: Your database name.
-events: Table name (adjust if it's events_multi_group from recent code).
-RESTART IDENTITY: Resets auto-increment IDs (e.g., SERIAL columns).
-CASCADE: Drops dependent data if any.
-
-Verify It's Empty:
-kubectl exec -it my-postgres-postgresql-0 -n kafka -- psql -U pocuser -d pocevents -c "SELECT COUNT(*) FROM events;"Should return 0.
+Monitor Results
+Action	Command
+Check Logs	kubectl logs -l app=pathway-consumer -f
+Check DB Count	kubectl exec -it postgres-0 -- psql -U user -d db -c "SELECT COUNT(*) FROM events;"
+Reset Data	kubectl exec -it postgres-0 -- psql -U user -d db -c "TRUNCATE TABLE events RESTART IDENTITY;"
+📝 Manual Configuration Notes
+[!IMPORTANT]
+Bootstrap Servers: Ensure consumer.py uses my-cluster-kafka-bootstrap.kafka.svc.cluster.local:9092.
+Database URL: Ensure the connection string in consumer.py is postgresql://user:password@postgres:5432/db.
+Memory Limits: If pods crash with OOM, increase Minikube memory to 8192mb.
+📊 Feature Comparison Matrix (Pathway vs. Others)
+Feature	Pathway (This POC)	Nuclio / Serverless
+DB Connections	Constant (Optimized)	Exponential (per replica)
+Backpressure	Native Kafka throttling	None (Risks DB exhaustion)
+Windowing	First-class SQL-like support	Limited / Manual
+Scale-out	Partition-aware consumers	Function-level only
+Maintenance	Single Python code-base	Fragmented (Nuclio/Spark/Python)
