@@ -101,6 +101,7 @@ Run Data Producer
 
 # Forward Kafka port to local machine
 kubectl port-forward svc/my-cluster-kafka-bootstrap -n kafka 9092:9092
+kubectl port-forward svc/my-postgres-postgresql -n kafka 5432:5432 --address 0.0.0.0
 
 # Run the producer script
 python producer.py
